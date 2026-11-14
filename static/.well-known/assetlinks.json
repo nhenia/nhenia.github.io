@@ -1,0 +1,10 @@
+[
+  {
+    "relation": ["delegate_permission/common.handle_all_urls"],
+    "target": {
+      "namespace": "android_app",
+      "package_name": "io.github.nhenia.clutched",
+      "sha256_cert_fingerprints": ["D3:1F:F9:AB:49:0E:68:92:DB:3E:B1:33:2B:59:27:13:38:35:9E:19:4D:7F:B2:D0:07:69:19:9F:33:23:7E:24"]
+    }
+  }
+]
