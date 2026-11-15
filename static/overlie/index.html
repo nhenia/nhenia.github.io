@@ -14,9 +14,12 @@ html,body{height:100%;background:var(--bg);color:var(--ink);font:13px/1.3 ui-mon
 body{display:flex;flex-direction:column;height:100dvh;overflow:hidden;padding-top:env(safe-area-inset-top)}
 #stage{position:relative;flex:1;min-height:0;overflow:hidden;touch-action:none;background:#000}
 video{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}
-#ov{position:absolute;left:0;top:0;transform-origin:0 0;pointer-events:none;user-select:none;display:none}
+#ov{position:absolute;left:0;top:0;transform-origin:50% 50%;pointer-events:none;user-select:none;display:none}
 #msg{position:absolute;inset:0;display:grid;place-items:center;text-align:center;padding:32px;color:var(--dim);pointer-events:none}
 #msg b{display:block;font:italic 700 34px/1 Georgia,serif;color:var(--ink);letter-spacing:-.02em;margin-bottom:10px}
+#add{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);background:var(--acc);color:#111;font:700 16px/1 ui-monospace,Menlo,monospace;padding:18px 26px;border-radius:99px;border:0;cursor:pointer;box-shadow:0 6px 30px rgba(0,0,0,.5);display:flex;align-items:center}
+#add input{display:none}
+#ver{position:absolute;right:10px;bottom:8px;font-size:10px;color:rgba(237,230,218,.45);pointer-events:none}
 #flash{position:absolute;inset:0;background:#fff;opacity:0;pointer-events:none;transition:opacity .25s}
 #top{position:absolute;top:10px;left:10px;right:10px;display:flex;justify-content:space-between;gap:8px;pointer-events:none}
 #top>*{pointer-events:auto}
@@ -49,6 +52,8 @@ input[type=range]::-moz-range-thumb{width:22px;height:22px;border-radius:50%;bac
   <video id="cam" playsinline muted autoplay></video>
   <img id="ov" alt="">
   <div id="msg"><div><b>Overlie</b><span id="msgtxt">Starting camera…</span></div></div>
+  <label id="add">+ Add overlay photo<input id="pick2" type="file" accept="image/*"></label>
+  <div id="ver">v2</div>
   <div id="flash"></div>
   <div id="top">
     <button class="chip" id="burn" aria-pressed="true" title="Include overlay in saved photo">Overlay in photo</button>
@@ -58,8 +63,9 @@ input[type=range]::-moz-range-thumb{width:22px;height:22px;border-radius:50%;bac
 <div id="bar">
   <label class="slide">Opacity<input id="op" type="range" min="0" max="100" value="50"><output id="opv">50%</output></label>
   <label class="slide">Size<input id="sz" type="range" min="10" max="300" value="100"><output id="szv">100%</output></label>
+  <label class="slide">Rotate<input id="rt" type="range" min="-180" max="180" value="0"><output id="rtv">0°</output></label>
   <div class="row">
-    <label class="btn">Overlay<input id="pick" type="file" accept="image/*"></label>
+    <label class="btn">Photo<input id="pick" type="file" accept="image/*"></label>
     <button id="shoot" aria-label="Take photo"><span></span></button>
     <button class="btn" id="reset">Center</button>
   </div>
@@ -77,27 +83,37 @@ const $ = id => document.getElementById(id);
 const stage = $('stage'), cam = $('cam'), ov = $('ov');
 let facing = 'environment', stream = null;
 // overlay state in stage-relative units: centre (fraction), width (fraction of stage width)
-const S = { cx: .5, cy: .5, w: 1, op: .5 };
+const S = { cx: .5, cy: .5, w: 1, op: .5, r: 0 };
 let lastBlob = null, lastURL = null;
 
 async function startCam() {
   if (stream) stream.getTracks().forEach(t => t.stop());
+  stream = null;
   if (!navigator.mediaDevices?.getUserMedia) {
-    $('msgtxt').textContent = 'Camera needs https. Open this from its web address, not as a file.';
+    $('msg').style.display = '';
+    $('msgtxt').textContent = 'This browser can\'t open the camera here. Open the link in Chrome itself (not inside another app).';
     return;
   }
-  try {
-    stream = await navigator.mediaDevices.getUserMedia({
-      video: { facingMode: facing, width: { ideal: 4096 }, height: { ideal: 4096 } }, audio: false
-    });
-    cam.srcObject = stream;
-    await cam.play();
-    $('msg').style.display = 'none';
-    cam.style.transform = facing === 'user' ? 'scaleX(-1)' : '';
-  } catch (e) {
-    $('msg').style.display = '';
-    $('msgtxt').textContent = 'No camera access. Allow camera permission and reload.';
+  const tries = [
+    { video: { facingMode: { ideal: facing }, width: { ideal: 1920 }, height: { ideal: 1080 } }, audio: false },
+    { video: { facingMode: { ideal: facing } }, audio: false },
+    { video: true, audio: false }
+  ];
+  let err = null;
+  for (const c of tries) {
+    try { stream = await navigator.mediaDevices.getUserMedia(c); break; } catch (e) { err = e; }
   }
+  if (!stream) {
+    $('msg').style.display = '';
+    $('msgtxt').textContent = (err && err.name === 'NotAllowedError')
+      ? 'Camera blocked. Tap the lock icon by the address, allow Camera, then reload.'
+      : 'Camera didn\'t start (' + (err ? err.name : 'unknown') + '). Close other camera apps and reload.';
+    return;
+  }
+  cam.srcObject = stream;
+  try { await cam.play(); } catch (e) {}
+  $('msg').style.display = 'none';
+  cam.style.transform = facing === 'user' ? 'scaleX(-1)' : '';
 }
 
 function render() {
@@ -105,21 +121,24 @@ function render() {
   const W = stage.clientWidth, H = stage.clientHeight;
   const w = S.w * W, h = w * ov.naturalHeight / ov.naturalWidth;
   ov.style.width = w + 'px';
-  ov.style.transform = `translate(${S.cx * W - w / 2}px,${S.cy * H - h / 2}px)`;
+  ov.style.transform = `translate(${S.cx * W - w / 2}px,${S.cy * H - h / 2}px) rotate(${S.r}deg)`;
   ov.style.opacity = S.op;
 }
 
-$('pick').onchange = e => {
+const onPick = e => {
   const f = e.target.files[0]; if (!f) return;
   if (ov.src) URL.revokeObjectURL(ov.src);
   ov.onload = () => { ov.style.display = 'block'; resetOv(); };
   ov.src = URL.createObjectURL(f);
   e.target.value = '';
+  $('add').style.display = 'none';
 };
-function resetOv() { S.cx = .5; S.cy = .5; S.w = 1; $('sz').value = 100; $('szv').textContent = '100%'; render(); }
+$('pick').onchange = onPick; $('pick2').onchange = onPick;
+function resetOv() { S.cx = .5; S.cy = .5; S.w = 1; S.r = 0; $('rt').value = 0; $('rtv').textContent = '0°'; $('sz').value = 100; $('szv').textContent = '100%'; render(); }
 $('reset').onclick = resetOv;
 $('op').oninput = e => { S.op = e.target.value / 100; $('opv').textContent = e.target.value + '%'; render(); };
 $('sz').oninput = e => { S.w = e.target.value / 100; $('szv').textContent = e.target.value + '%'; render(); };
+$('rt').oninput = e => { S.r = +e.target.value; $('rtv').textContent = e.target.value + '°'; render(); };
 $('flip').onclick = () => { facing = facing === 'user' ? 'environment' : 'user'; startCam(); };
 $('burn').onclick = e => e.currentTarget.setAttribute('aria-pressed', e.currentTarget.getAttribute('aria-pressed') !== 'true');
 
@@ -133,7 +152,7 @@ function snap() {
     g = { d, w: S.w, mx: (p[0].x + p[1].x) / 2, my: (p[0].y + p[1].y) / 2, cx: S.cx, cy: S.cy };
   }
 }
-stage.addEventListener('pointerdown', e => { if (e.target.closest('#top')) return; stage.setPointerCapture(e.pointerId); pts.set(e.pointerId, { x: e.clientX, y: e.clientY }); snap(); });
+stage.addEventListener('pointerdown', e => { if (e.target.closest('#top,#add')) return; stage.setPointerCapture(e.pointerId); pts.set(e.pointerId, { x: e.clientX, y: e.clientY }); snap(); });
 stage.addEventListener('pointermove', e => {
   if (!pts.has(e.pointerId) || !ov.naturalWidth) return;
   pts.set(e.pointerId, { x: e.clientX, y: e.clientY });
@@ -167,10 +186,12 @@ $('shoot').onclick = () => {
   if (mirror) x.setTransform(1, 0, 0, 1, 0, 0);
   if (ov.naturalWidth && $('burn').getAttribute('aria-pressed') === 'true') {
     const w = S.w * W, h = w * ov.naturalHeight / ov.naturalWidth;
-    const sx = S.cx * W - w / 2, sy = S.cy * H - h / 2;
+    x.save();
     x.globalAlpha = S.op;
-    x.drawImage(ov, (sx - offX) / s, (sy - offY) / s, w / s, h / s);
-    x.globalAlpha = 1;
+    x.translate((S.cx * W - offX) / s, (S.cy * H - offY) / s);
+    x.rotate(S.r * Math.PI / 180);
+    x.drawImage(ov, -w / s / 2, -h / s / 2, w / s, h / s);
+    x.restore();
   }
   $('flash').style.opacity = .8; setTimeout(() => $('flash').style.opacity = 0, 60);
   c.toBlob(b => {
