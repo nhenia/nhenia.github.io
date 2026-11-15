@@ -38,6 +38,11 @@ input[type=range]::-moz-range-thumb{width:22px;height:22px;border-radius:50%;bac
 .row{display:grid;grid-template-columns:1fr auto 1fr;align-items:center;gap:12px}
 .btn{display:flex;align-items:center;justify-content:center;height:44px;border:1px solid var(--line);border-radius:12px;color:var(--ink);background:none;font:inherit;cursor:pointer}
 .btn input{display:none}
+.pair{display:grid;grid-template-columns:1fr 1fr;gap:6px}
+.pair .btn{height:52px;font-size:13px}
+.btn:active{background:var(--line)}
+#torch[aria-pressed=true]{background:var(--acc);color:#111;border-color:var(--acc);font-weight:700}
+#toast{position:absolute;left:50%;bottom:16px;transform:translateX(-50%);background:rgba(13,12,11,.9);color:var(--ink);padding:10px 14px;border-radius:10px;font-size:12px;text-align:center;width:max-content;max-width:90%;opacity:0;transition:opacity .2s;pointer-events:none}
 #shoot{width:72px;height:72px;border-radius:50%;border:3px solid var(--ink);background:none;padding:5px;cursor:pointer}
 #shoot span{display:block;width:100%;height:100%;border-radius:50%;background:var(--ink);transition:transform .1s}
 #shoot:active span{transform:scale(.88);background:var(--acc)}
@@ -56,11 +61,12 @@ input[type=range]::-moz-range-thumb{width:22px;height:22px;border-radius:50%;bac
   <img id="ov" alt="">
   <div id="msg"><div><b>Overlie</b><span id="msgtxt">Starting camera…</span></div></div>
   <label id="add">+ Add overlay photo<input id="pick2" type="file" accept="image/*"></label>
-  <div id="ver">v4</div>
+  <div id="ver">v5</div>
+  <div id="toast"></div>
   <div id="flash"></div>
   <div id="top">
     <button class="chip" id="burn" aria-pressed="true" title="Include overlay in saved photo">Overlay in photo</button>
-    <span style="display:flex;gap:8px"><button class="chip" id="torch" aria-pressed="false" hidden>Torch</button><button class="chip" id="flip">Flip cam</button></span>
+    
   </div>
 </div>
 <div id="bar">
@@ -68,9 +74,9 @@ input[type=range]::-moz-range-thumb{width:22px;height:22px;border-radius:50%;bac
   <label class="slide">Size<input id="sz" type="range" min="10" max="300" value="100"><output id="szv">100%</output></label>
   <label class="slide">Rotate<input id="rt" type="range" min="-180" max="180" value="0"><output id="rtv">0°</output></label>
   <div class="row">
-    <label class="btn">Photo<input id="pick" type="file" accept="image/*"></label>
+    <div class="pair"><label class="btn">Photo<input id="pick" type="file" accept="image/*"></label><button class="btn" id="flip">Flip</button></div>
     <button id="shoot" aria-label="Take photo"><span></span></button>
-    <button class="btn" id="reset">Center</button>
+    <div class="pair"><button class="btn" id="torch" aria-pressed="false">Torch</button><button class="btn" id="reset">Center</button></div>
   </div>
 </div>
 <div id="sheet">
@@ -119,19 +125,23 @@ async function startCam() {
   setupTorch();
 }
 
-// torch: only shown when the active camera has a flashlight (usually the back camera)
-let torchOn = false;
-function setupTorch() {
+// torch: always visible; tries the flashlight and says so if the phone won't allow it
+let torchOn = false, toastT = 0;
+function toast(m) { const t = $('toast'); t.textContent = m; t.style.opacity = 1; clearTimeout(toastT); toastT = setTimeout(() => t.style.opacity = 0, 2600); }
+function setupTorch() { if (torchOn) applyTorch(true, true); }
+async function applyTorch(on, quiet) {
   const t = stream && stream.getVideoTracks()[0];
-  const ok = !!(t && t.getCapabilities && t.getCapabilities().torch);
-  $('torch').hidden = !ok;
-  if (!ok) { torchOn = false; $('torch').setAttribute('aria-pressed', 'false'); return; }
-  if (torchOn) applyTorch(true);
-}
-async function applyTorch(on) {
-  const t = stream && stream.getVideoTracks()[0]; if (!t) return;
-  try { await t.applyConstraints({ advanced: [{ torch: on }] }); torchOn = on; }
-  catch (e) { torchOn = false; }
+  if (!t) { if (!quiet) toast('Camera isn\'t running yet'); return; }
+  try {
+    await t.applyConstraints({ advanced: [{ torch: on }] });
+    const st = t.getSettings ? t.getSettings() : {};
+    if (on && st.torch === false) throw new Error('ignored');
+    torchOn = on;
+    $('toast').style.opacity = 0;
+  } catch (e) {
+    torchOn = false;
+    if (!quiet) toast(facing === 'user' ? 'Flip to the back camera for the torch' : 'This phone won\'t let the browser use the flashlight');
+  }
   $('torch').setAttribute('aria-pressed', String(torchOn));
 }
 $('torch').onclick = () => applyTorch(!torchOn);
