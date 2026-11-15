@@ -13,8 +13,9 @@
 html,body{height:100%;background:var(--bg);color:var(--ink);font:13px/1.3 ui-monospace,Menlo,Consolas,monospace;overscroll-behavior:none}
 body{display:flex;flex-direction:column;height:100dvh;overflow:hidden;padding-top:env(safe-area-inset-top)}
 #stage{position:relative;flex:1;min-height:0;overflow:hidden;touch-action:none;background:#000}
-video{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}
-#ov{position:absolute;left:0;top:0;transform-origin:50% 50%;pointer-events:none;user-select:none;display:none}
+#cam{position:fixed;left:0;top:0;width:2px;height:2px;opacity:0;pointer-events:none}
+#view{position:absolute;inset:0;width:100%;height:100%;display:block}
+#ov{display:none}
 #msg{position:absolute;inset:0;display:grid;place-items:center;text-align:center;padding:32px;color:var(--dim);pointer-events:none}
 #msg b{display:block;font:italic 700 34px/1 Georgia,serif;color:var(--ink);letter-spacing:-.02em;margin-bottom:10px}
 #add{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);background:var(--acc);color:#111;font:700 16px/1 ui-monospace,Menlo,monospace;padding:18px 26px;border-radius:99px;border:0;cursor:pointer;box-shadow:0 6px 30px rgba(0,0,0,.5);display:flex;align-items:center}
@@ -23,7 +24,7 @@ video{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}
 #flash{position:absolute;inset:0;background:#fff;opacity:0;pointer-events:none;transition:opacity .25s}
 #top{position:absolute;top:10px;left:10px;right:10px;display:flex;justify-content:space-between;gap:8px;pointer-events:none}
 #top>*{pointer-events:auto}
-.chip{background:rgba(13,12,11,.6);backdrop-filter:blur(8px);border:1px solid rgba(237,230,218,.18);color:var(--ink);border-radius:99px;padding:8px 12px;font:inherit;cursor:pointer}
+.chip{background:rgba(13,12,11,.85);border:1px solid rgba(237,230,218,.18);color:var(--ink);border-radius:99px;padding:8px 12px;font:inherit;cursor:pointer}
 .chip[aria-pressed=true]{background:var(--acc);color:#111;border-color:var(--acc)}
 #bar{border-top:1px solid var(--line);padding:12px 16px calc(14px + env(safe-area-inset-bottom));display:grid;gap:12px}
 .slide{display:grid;grid-template-columns:64px 1fr 44px;align-items:center;gap:10px;color:var(--dim)}
@@ -50,10 +51,11 @@ input[type=range]::-moz-range-thumb{width:22px;height:22px;border-radius:50%;bac
 <body>
 <div id="stage">
   <video id="cam" playsinline muted autoplay></video>
+  <canvas id="view"></canvas>
   <img id="ov" alt="">
   <div id="msg"><div><b>Overlie</b><span id="msgtxt">Starting camera…</span></div></div>
   <label id="add">+ Add overlay photo<input id="pick2" type="file" accept="image/*"></label>
-  <div id="ver">v2</div>
+  <div id="ver">v3</div>
   <div id="flash"></div>
   <div id="top">
     <button class="chip" id="burn" aria-pressed="true" title="Include overlay in saved photo">Overlay in photo</button>
@@ -113,22 +115,55 @@ async function startCam() {
   cam.srcObject = stream;
   try { await cam.play(); } catch (e) {}
   $('msg').style.display = 'none';
-  cam.style.transform = facing === 'user' ? 'scaleX(-1)' : '';
 }
 
-function render() {
-  if (!ov.naturalWidth) return;
-  const W = stage.clientWidth, H = stage.clientHeight;
-  const w = S.w * W, h = w * ov.naturalHeight / ov.naturalWidth;
-  ov.style.width = w + 'px';
-  ov.style.transform = `translate(${S.cx * W - w / 2}px,${S.cy * H - h / 2}px) rotate(${S.r}deg)`;
-  ov.style.opacity = S.op;
+// preview: camera + overlay painted together on one canvas (no stacked layers)
+const view = $('view'), vx = view.getContext('2d');
+let prev = null; // downscaled overlay for smooth preview; full-res ov is used for the saved photo
+function render() {}
+function makePrev() {
+  const m = 1600, k = Math.min(1, m / Math.max(ov.naturalWidth, ov.naturalHeight));
+  const c = document.createElement('canvas');
+  c.width = Math.round(ov.naturalWidth * k); c.height = Math.round(ov.naturalHeight * k);
+  c.getContext('2d').drawImage(ov, 0, 0, c.width, c.height);
+  prev = c;
 }
+function draw() {
+  const W = stage.clientWidth, H = stage.clientHeight, d = Math.min(2, devicePixelRatio || 1);
+  const pw = Math.round(W * d), ph = Math.round(H * d);
+  if (view.width !== pw || view.height !== ph) { view.width = pw; view.height = ph; }
+  vx.setTransform(d, 0, 0, d, 0, 0);
+  vx.fillStyle = '#000'; vx.fillRect(0, 0, W, H);
+  const vw = cam.videoWidth, vh = cam.videoHeight;
+  if (vw && cam.readyState >= 2) {
+    const s = Math.max(W / vw, H / vh), dw = vw * s, dh = vh * s;
+    vx.save();
+    if (facing === 'user') { vx.translate(W, 0); vx.scale(-1, 1); }
+    vx.drawImage(cam, (W - dw) / 2, (H - dh) / 2, dw, dh);
+    vx.restore();
+  }
+  if (prev) {
+    const w = S.w * W, h = w * prev.height / prev.width;
+    vx.save(); vx.globalAlpha = S.op;
+    vx.translate(S.cx * W, S.cy * H); vx.rotate(S.r * Math.PI / 180);
+    vx.drawImage(prev, -w / 2, -h / 2, w, h);
+    vx.restore();
+  }
+  requestAnimationFrame(draw);
+}
+requestAnimationFrame(draw);
+// Android pauses/kills the camera while the photo picker is open: bring it back
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState !== 'visible') return;
+  const t = stream && stream.getVideoTracks()[0];
+  if (!t || t.readyState === 'ended' || t.muted) startCam();
+  else cam.play().catch(() => startCam());
+});
 
 const onPick = e => {
   const f = e.target.files[0]; if (!f) return;
   if (ov.src) URL.revokeObjectURL(ov.src);
-  ov.onload = () => { ov.style.display = 'block'; resetOv(); };
+  ov.onload = () => { makePrev(); resetOv(); };
   ov.src = URL.createObjectURL(f);
   e.target.value = '';
   $('add').style.display = 'none';
