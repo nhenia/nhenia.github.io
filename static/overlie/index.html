@@ -62,7 +62,7 @@ input[type=range]::-moz-range-thumb{width:22px;height:22px;border-radius:50%;bac
   <img id="ov" alt="">
   <div id="msg"><div><b>Overlie</b><span id="msgtxt">Starting camera…</span></div></div>
   <label id="add">+ Add overlay photo<input id="pick2" type="file" accept="image/*"></label>
-  <div id="ver">v6</div>
+  <div id="ver">v7</div>
   <div id="toast"></div>
   <div id="flash"></div>
   <div id="top">
@@ -278,15 +278,24 @@ $('shoot').onclick = () => {
 };
 const fname = () => 'overlie-' + new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19) + '.jpg';
 $('retake').onclick = () => $('sheet').classList.remove('on');
-$('save').onclick = () => { const a = document.createElement('a'); a.href = lastURL; a.download = fname(); document.body.appendChild(a); a.click(); a.remove(); };
+// inside the Android app, save/share go through the native gallery bridge
+const native = window.OverlieNative;
+function viaNative(kind) {
+  const r = new FileReader();
+  r.onload = () => native[kind](r.result.split(',')[1], fname());
+  r.readAsDataURL(lastBlob);
+}
+$('save').onclick = () => {
+  if (native) return viaNative('save'); const a = document.createElement('a'); a.href = lastURL; a.download = fname(); document.body.appendChild(a); a.click(); a.remove(); };
 $('share').onclick = async () => {
+  if (native) return viaNative('share');
   const f = new File([lastBlob], fname(), { type: 'image/jpeg' });
   if (navigator.canShare?.({ files: [f] })) { try { await navigator.share({ files: [f] }); } catch (e) {} }
   else $('save').click();
 };
 
 startCam();
-if ('serviceWorker' in navigator && location.protocol === 'https:') navigator.serviceWorker.register('sw.js');
+if (!native && 'serviceWorker' in navigator && location.protocol === 'https:') navigator.serviceWorker.register('sw.js');
 </script>
 </body>
 </html>

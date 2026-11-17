@@ -1,0 +1,57 @@
+name: Build Overlie Android app
+
+# Builds the APK from static/overlie (the same files as the web app)
+# and publishes it as the latest GitHub Release, so the download link never changes:
+# https://github.com/nhenia/nhenia.github.io/releases/latest/download/Overlie.apk
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'static/overlie/**'
+      - 'android/**'
+      - '.github/workflows/android.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: overlie-android
+  cancel-in-progress: true
+
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.10.2'
+
+      - name: Bundle the web app into the APK
+        run: |
+          mkdir -p android/app/src/main/assets
+          cp static/overlie/index.html static/overlie/icon-192.png android/app/src/main/assets/
+
+      - name: Build signed APK
+        working-directory: android
+        env:
+          VERSION_CODE: ${{ github.run_number }}
+        run: gradle --no-daemon assembleRelease
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cp android/app/build/outputs/apk/release/app-release.apk Overlie.apk
+          ls -la Overlie.apk
+          gh release create "overlie-${{ github.run_number }}" Overlie.apk \
+            --title "Overlie build ${{ github.run_number }}" \
+            --notes "Install Overlie.apk on your Android phone. Built from ${{ github.sha }}." \
+            --latest
