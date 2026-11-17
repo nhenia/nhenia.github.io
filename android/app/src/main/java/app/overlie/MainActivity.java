@@ -28,13 +28,13 @@ import java.io.InputStream;
 import java.io.OutputStream;
 
 /**
- * Overlie as a real Android app: the web app (bundled in assets/) runs in a WebView,
+ * Haint (formerly Overlie) as a real Android app: the web app (bundled in assets/) runs in a WebView,
  * fully offline. Native code only handles camera permission, the photo picker,
  * and saving/sharing photos to the gallery.
  */
 public class MainActivity extends Activity {
     // Fake https origin so the page is a "secure context" (needed for the camera)
-    private static final String ORIGIN = "https://overlie.local/";
+    private static final String ORIGIN = "https://haint.local/";
     private static final int REQ_CAMERA = 1, REQ_PICK = 2, REQ_STORAGE = 3;
 
     private WebView web;
@@ -161,13 +161,13 @@ public class MainActivity extends Activity {
             ContentValues cv = new ContentValues();
             cv.put(MediaStore.Images.Media.DISPLAY_NAME, name);
             cv.put(MediaStore.Images.Media.MIME_TYPE, "image/jpeg");
-            cv.put(MediaStore.Images.Media.RELATIVE_PATH, Environment.DIRECTORY_PICTURES + "/Overlie");
+            cv.put(MediaStore.Images.Media.RELATIVE_PATH, Environment.DIRECTORY_PICTURES + "/Haint");
             Uri uri = getContentResolver().insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, cv);
             if (uri == null) throw new Exception("no uri");
             try (OutputStream out = getContentResolver().openOutputStream(uri)) { out.write(jpeg); }
             return uri;
         } else {
-            File dir = new File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_PICTURES), "Overlie");
+            File dir = new File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_PICTURES), "Haint");
             if (!dir.exists() && !dir.mkdirs()) throw new Exception("no folder");
             File f = new File(dir, name);
             try (FileOutputStream out = new FileOutputStream(f)) { out.write(jpeg); }
@@ -187,7 +187,7 @@ public class MainActivity extends Activity {
         public void save(String b64, String name) {
             try {
                 saveToGallery(Base64.decode(b64, Base64.DEFAULT), name);
-                toast("Saved to Pictures/Overlie");
+                toast("Saved to Pictures/Haint");
             } catch (Exception e) {
                 toast("Couldn't save the photo");
             }

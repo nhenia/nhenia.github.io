@@ -1,13 +1,13 @@
-name: Build Overlie Android app
+name: Build Haint Android app
 
-# Builds the APK from static/overlie (the same files as the web app)
+# Builds the APK from static/haint (the same files as the web app)
 # and publishes it as the latest GitHub Release, so the download link never changes:
-# https://github.com/nhenia/nhenia.github.io/releases/latest/download/Overlie.apk
+# https://github.com/nhenia/nhenia.github.io/releases/latest/download/Haint.apk
 on:
   push:
     branches: [main]
     paths:
-      - 'static/overlie/**'
+      - 'static/haint/**'
       - 'android/**'
       - '.github/workflows/android.yml'
   workflow_dispatch:
@@ -16,7 +16,7 @@ permissions:
   contents: write
 
 concurrency:
-  group: overlie-android
+  group: haint-android
   cancel-in-progress: true
 
 jobs:
@@ -37,7 +37,7 @@ jobs:
       - name: Bundle the web app into the APK
         run: |
           mkdir -p android/app/src/main/assets
-          cp static/overlie/index.html static/overlie/icon-192.png android/app/src/main/assets/
+          cp static/haint/index.html static/haint/icon-192.png android/app/src/main/assets/
 
       - name: Build signed APK
         working-directory: android
@@ -49,9 +49,9 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          cp android/app/build/outputs/apk/release/app-release.apk Overlie.apk
-          ls -la Overlie.apk
-          gh release create "overlie-${{ github.run_number }}" Overlie.apk \
-            --title "Overlie build ${{ github.run_number }}" \
-            --notes "Install Overlie.apk on your Android phone. Built from ${{ github.sha }}." \
+          cp android/app/build/outputs/apk/release/app-release.apk Haint.apk
+          ls -la Haint.apk
+          gh release create "haint-${{ github.run_number }}" Haint.apk \
+            --title "Haint build ${{ github.run_number }}" \
+            --notes "Install Haint.apk on your Android phone. Built from ${{ github.sha }}." \
             --latest
