@@ -27,6 +27,9 @@ body{display:flex;flex-direction:column;height:100dvh;overflow:hidden;padding-to
 #top>*{pointer-events:auto}
 .chip{background:rgba(13,12,11,.85);border:1px solid rgba(237,230,218,.18);color:var(--ink);border-radius:99px;padding:8px 12px;font:inherit;cursor:pointer}
 .chip[hidden]{display:none}
+#stage.locked{outline:2px solid var(--acc);outline-offset:-2px}
+.slide input:disabled{opacity:.3}
+.btn:disabled,.btn:has(input:disabled){opacity:.3}
 .chip[aria-pressed=true]{background:var(--acc);color:#111;border-color:var(--acc)}
 #bar{border-top:1px solid var(--line);padding:12px 16px calc(14px + env(safe-area-inset-bottom));display:grid;gap:12px}
 .slide{display:grid;grid-template-columns:76px 1fr 52px;align-items:center;gap:10px;color:var(--dim)}
@@ -62,11 +65,12 @@ input[type=range]::-moz-range-thumb{width:22px;height:22px;border-radius:50%;bac
   <img id="ov" alt="">
   <div id="msg"><div><b>Haint</b><span id="msgtxt">Starting camera…</span></div></div>
   <label id="add">+ Add overlay photo<input id="pick2" type="file" accept="image/*"></label>
-  <div id="ver">v8</div>
+  <div id="ver">v9</div>
   <div id="toast"></div>
   <div id="flash"></div>
   <div id="top">
     <button class="chip" id="burn" aria-pressed="true" title="Include overlay in saved photo">Overlay in photo</button>
+    <span style="display:flex;gap:8px"><button class="chip" id="freeze" aria-pressed="false">Freeze</button><button class="chip" id="lock" aria-pressed="false">Lock</button></span>
     
   </div>
 </div>
@@ -147,9 +151,48 @@ async function applyTorch(on, quiet) {
 }
 $('torch').onclick = () => applyTorch(!torchOn);
 
+// FREEZE: hold the current frame (doodle-grid lining up); camera is switched off meanwhile
+function setFreeze(on) {
+  if (on) {
+    const vw = cam.videoWidth, vh = cam.videoHeight;
+    if (!vw) { toast('Camera isn\'t running yet'); return; }
+    const c = document.createElement('canvas'); c.width = vw; c.height = vh;
+    const x = c.getContext('2d');
+    if (facing === 'user') { x.translate(vw, 0); x.scale(-1, 1); }
+    x.drawImage(cam, 0, 0, vw, vh);
+    frozen = c;
+    if (stream) stream.getTracks().forEach(t => t.stop());
+    toast('Frozen. Line up your sketch, then save');
+  } else {
+    frozen = null;
+    startCam();
+  }
+  $('freeze').setAttribute('aria-pressed', String(!!frozen));
+  $('flip').disabled = !!frozen; $('torch').disabled = !!frozen;
+  dirty = true;
+}
+$('freeze').onclick = () => setFreeze(!frozen);
+
+// LOCK: pin the overlay for tracing; opacity still works; screen stays awake
+async function keepAwake(on) {
+  try {
+    if (on && 'wakeLock' in navigator) wake = await navigator.wakeLock.request('screen');
+    else if (!on && wake) { await wake.release(); wake = null; }
+  } catch (e) {}
+}
+$('lock').onclick = () => {
+  locked = !locked;
+  $('lock').setAttribute('aria-pressed', String(locked));
+  stage.classList.toggle('locked', locked);
+  ['sz', 'rt', 'reset', 'pick', 'pick2'].forEach(id => $(id).disabled = locked);
+  keepAwake(locked);
+  toast(locked ? 'Locked. Touches won\'t move the overlay' : 'Unlocked');
+};
+
 // preview: camera + overlay painted together on one canvas (no stacked layers)
 const view = $('view'), vx = view.getContext('2d');
 let dirty = true, lastT = -1;
+let frozen = null, locked = false, wake = null;
 let prev = null; // downscaled overlay for smooth preview; full-res ov is used for the saved photo
 function render() { dirty = true; }
 function makePrev() {
@@ -164,20 +207,25 @@ function draw() {
   // only repaint when the camera has a new frame or something moved: saves CPU and battery
   if (document.hidden) return;
   const ct = cam.currentTime;
-  if (!dirty && ct === lastT) return;
+  if (!dirty && (frozen || ct === lastT)) return;
   dirty = false; lastT = ct;
   const W = stage.clientWidth, H = stage.clientHeight, d = 1; // 1x preview: much lighter, saved photo stays full-res
   const pw = Math.round(W * d), ph = Math.round(H * d);
   if (view.width !== pw || view.height !== ph) { view.width = pw; view.height = ph; }
   vx.setTransform(d, 0, 0, d, 0, 0);
   vx.fillStyle = '#000'; vx.fillRect(0, 0, W, H);
-  const vw = cam.videoWidth, vh = cam.videoHeight;
-  if (vw && cam.readyState >= 2) {
-    const s = Math.max(W / vw, H / vh), dw = vw * s, dh = vh * s;
-    vx.save();
-    if (facing === 'user') { vx.translate(W, 0); vx.scale(-1, 1); }
-    vx.drawImage(cam, (W - dw) / 2, (H - dh) / 2, dw, dh);
-    vx.restore();
+  if (frozen) {
+    const s = Math.max(W / frozen.width, H / frozen.height), dw = frozen.width * s, dh = frozen.height * s;
+    vx.drawImage(frozen, (W - dw) / 2, (H - dh) / 2, dw, dh);
+  } else {
+    const vw = cam.videoWidth, vh = cam.videoHeight;
+    if (vw && cam.readyState >= 2) {
+      const s = Math.max(W / vw, H / vh), dw = vw * s, dh = vh * s;
+      vx.save();
+      if (facing === 'user') { vx.translate(W, 0); vx.scale(-1, 1); }
+      vx.drawImage(cam, (W - dw) / 2, (H - dh) / 2, dw, dh);
+      vx.restore();
+    }
   }
   if (prev) {
     const w = S.w * W, h = w * prev.height / prev.width;
@@ -195,6 +243,8 @@ document.addEventListener('visibilitychange', () => {
     return;
   }
   picking = false;
+  if (frozen) return;
+  if (locked) keepAwake(true);
   const t = stream && stream.getVideoTracks()[0];
   if (!t || t.readyState === 'ended' || t.muted) startCam();
   else cam.play().catch(() => startCam());
@@ -216,7 +266,7 @@ $('reset').onclick = resetOv;
 $('op').oninput = e => { S.op = e.target.value / 100; $('opv').textContent = e.target.value + '%'; render(); };
 $('sz').oninput = e => { S.w = e.target.value / 100; $('szv').textContent = e.target.value + '%'; render(); };
 $('rt').oninput = e => { S.r = +e.target.value; $('rtv').textContent = e.target.value + '°'; render(); };
-$('flip').onclick = () => { facing = facing === 'user' ? 'environment' : 'user'; startCam(); };
+$('flip').onclick = () => { if (frozen) return; facing = facing === 'user' ? 'environment' : 'user'; startCam(); };
 $('burn').onclick = e => e.currentTarget.setAttribute('aria-pressed', e.currentTarget.getAttribute('aria-pressed') !== 'true');
 
 // drag with one finger, pinch with two
@@ -229,7 +279,7 @@ function snap() {
     g = { d, w: S.w, mx: (p[0].x + p[1].x) / 2, my: (p[0].y + p[1].y) / 2, cx: S.cx, cy: S.cy };
   }
 }
-stage.addEventListener('pointerdown', e => { if (e.target.closest('#top,#add')) return; stage.setPointerCapture(e.pointerId); pts.set(e.pointerId, { x: e.clientX, y: e.clientY }); snap(); });
+stage.addEventListener('pointerdown', e => { if (locked || e.target.closest('#top,#add')) return; stage.setPointerCapture(e.pointerId); pts.set(e.pointerId, { x: e.clientX, y: e.clientY }); snap(); });
 stage.addEventListener('pointermove', e => {
   if (!pts.has(e.pointerId) || !ov.naturalWidth) return;
   pts.set(e.pointerId, { x: e.clientX, y: e.clientY });
@@ -247,19 +297,20 @@ stage.addEventListener('pointermove', e => {
 const up = e => { pts.delete(e.pointerId); snap(); };
 stage.addEventListener('pointerup', up); stage.addEventListener('pointercancel', up);
 // mouse wheel resize for desktop
-stage.addEventListener('wheel', e => { e.preventDefault(); S.w = Math.min(3, Math.max(.1, S.w * (e.deltaY < 0 ? 1.05 : .95))); const pct = Math.round(S.w * 100); $('sz').value = pct; $('szv').textContent = pct + '%'; render(); }, { passive: false });
+stage.addEventListener('wheel', e => { e.preventDefault(); if (locked) return; S.w = Math.min(3, Math.max(.1, S.w * (e.deltaY < 0 ? 1.05 : .95))); const pct = Math.round(S.w * 100); $('sz').value = pct; $('szv').textContent = pct + '%'; render(); }, { passive: false });
 addEventListener('resize', render);
 
 // capture: full-res camera frame, overlay mapped from screen (object-fit:cover) to frame pixels
 $('shoot').onclick = () => {
-  const vw = cam.videoWidth, vh = cam.videoHeight; if (!vw) return;
+  const src = frozen || cam;
+  const vw = frozen ? frozen.width : cam.videoWidth, vh = frozen ? frozen.height : cam.videoHeight; if (!vw) return;
   const W = stage.clientWidth, H = stage.clientHeight;
   const s = Math.max(W / vw, H / vh), offX = (W - vw * s) / 2, offY = (H - vh * s) / 2;
   const c = document.createElement('canvas'); c.width = vw; c.height = vh;
   const x = c.getContext('2d');
-  const mirror = facing === 'user';
+  const mirror = !frozen && facing === 'user';
   if (mirror) { x.translate(vw, 0); x.scale(-1, 1); }
-  x.drawImage(cam, 0, 0, vw, vh);
+  x.drawImage(src, 0, 0, vw, vh);
   if (mirror) x.setTransform(1, 0, 0, 1, 0, 0);
   if (ov.naturalWidth && $('burn').getAttribute('aria-pressed') === 'true') {
     const w = S.w * W, h = w * ov.naturalHeight / ov.naturalWidth;
